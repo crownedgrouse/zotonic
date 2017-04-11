@@ -130,43 +130,41 @@ check_request_logon(Context) ->
         true ->
             case serve_oauth(Context,
                 fun(URL, Params, Consumer, Signature) ->
-                        case oauth_param(<<"oauth_token">>, Context) of
-                            undefined ->
-                                {false, authenticate(<<"Missing OAuth token.">>, Context)};
-                            ParamToken ->
-                                case m_oauth_app:secrets_for_verify(access, Consumer, ParamToken, Context) of
-                                    undefined ->
-                                        {false, authenticate(<<"Access token not found.">>, Context)};
-                                    Token ->
-                                        case m_oauth_app:check_nonce(
-                                                Consumer,
-                                                Token,
-                                                oauth_param(<<"oauth_timestamp">>, Context),
-                                                oauth_param(<<"oauth_nonce">>, Context),
-                                                Context)
-                                        of
-                                            {false, Reason} ->
-                                                {false, authenticate(Reason, Context)};
-                                            true ->
-                                                SigMethod = oauth_param(<<"oauth_signature_method">>, Context),
-                                                case oauth:verify(z_convert:to_list(Signature),
-                                                                  z_convert:to_list(m_req:get(method, Context)),
-                                                                  URL,
-                                                                  Params,
-                                                                  to_oauth_consumer(Consumer, SigMethod),
-                                                                  str_value(token_secret, Token))
-                                                of
-                                                    true ->
-                                                        UID = int_value(user_id, Token),
-                                                        Context1 = z_acl:logon(UID, Context),
-                                                        Context2 = z_context:set(oauth_consumer, Consumer, Context1),
-                                                        {true, Context2};
-                                                    false ->
-                                                        {false, authenticate(<<"Signature verification failed.">>, Context)}
-                                                end
-                                        end
-                                end
-                        end
+                    ParamToken = oauth_param(<<"oauth_token">>, Context),
+                    case m_oauth_app:secrets_for_verify(access, Consumer, ParamToken, Context) of
+                        undefined ->
+                            {false, authenticate(<<"Access token not found.">>, Context)};
+                        Token ->
+                            case m_oauth_app:check_nonce(
+                                        Consumer,
+                                        Token,
+                                        oauth_param(<<"oauth_timestamp">>, Context),
+                                        oauth_param(<<"oauth_nonce">>, Context),
+                                        Context)
+                            of
+                                {false, Reason} ->
+                                    {false, authenticate(Reason, Context)};
+                                true ->
+                                    SigMethod = oauth_param(<<"oauth_signature_method">>, Context),
+                                    case oauth:verify(z_convert:to_list(Signature),
+                                                      z_convert:to_list(m_req:get(method, Context)),
+                                                      URL,
+                                                      Params,
+                                                      to_oauth_consumer(Consumer, SigMethod),
+                                                      str_value(token_secret, Token))
+                                    of
+                                        true ->
+                                            Context1 = case int_value(user_id, Token) of
+                                                undefined -> Context;
+                                                UID -> z_acl:logon(UID, Context)
+                                            end,
+                                            Context2 = z_context:set(oauth_consumer, Consumer, Context1),
+                                            {true, Context2};
+                                        false ->
+                                            {false, authenticate(<<"Signature verification failed.">>, Context)}
+                                    end
+                            end
+                    end
                 end)
             of
                 {{halt, Code}, Context2} ->
@@ -207,7 +205,7 @@ strip_params([H|T]) ->
 %% are considered for OAuth signature verification.
 %%
 to_oauth_params(Context) ->
-    Req = z_context:get_q_all(Context),
+    Req = z_context:get_q_all_noz(Context),
     AuthHeader = z_context:get_req_header(<<"authorization">>, Context),
     Params = case AuthHeader of
         <<"OAuth ", OAuthHeader/binary>> ->
